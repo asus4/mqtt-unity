@@ -2,23 +2,29 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-namespace Mqtt
+using MQTTnet;
+using MQTTnet.Server;
+
+public class SampleServer : MonoBehaviour
 {
-    
+    IMqttServer server;
 
-    public class SampleServer : MonoBehaviour
+    async void Start()
     {
-        // Start is called before the first frame update
-        void Start()
-        {
-            
-        }
+        server = new MqttFactory().CreateMqttServer();
+        var options = new MqttServerOptionsBuilder()
+            .WithConnectionBacklog(10)
+            .WithDefaultEndpointPort(1883)
+            .Build();
+        await server.StartAsync(options);
 
-        // Update is called once per frame
-        void Update()
-        {
-            
-        }
+        Debug.Log("server started");
     }
 
+    async void OnDestroy()
+    {
+        Debug.Log("server stopping");
+        await server.StopAsync();
+        Debug.Log("server stoped");
+    }
 }
