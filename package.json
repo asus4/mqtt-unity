@@ -1,0 +1,8 @@
+{
+    "name": "com.github.asus4.mqtt-unity",
+    "displayName": "MQTT",
+    "version": "0.1.0",
+    "unity": "2019.1",
+    "description": "MQTT for Unity",
+    "dependencies": { }
+}
