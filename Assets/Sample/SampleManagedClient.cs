@@ -11,8 +11,13 @@ public class SampleManagedClient : MonoBehaviour
 {
     [SerializeField]
     string ipAddress = "";
+
     [SerializeField]
     int port = 1883;
+
+    [SerializeField]
+    Transform target = null;
+
 
     IManagedMqttClient client;
     StringBuilder sb = new StringBuilder();
@@ -44,6 +49,7 @@ public class SampleManagedClient : MonoBehaviour
         {
             PublishMessage();
         }
+        SendPosition();
     }
 
     public async void Connect(string address)
@@ -69,6 +75,7 @@ public class SampleManagedClient : MonoBehaviour
 
         await client.StartAsync(managedOptions);
         await client.SubscribeAsync("/my/test");
+        await client.SubscribeAsync("/my/transform");
 
         Debug.Log("Subscribed");
     }
@@ -85,6 +92,16 @@ public class SampleManagedClient : MonoBehaviour
                 .WithPayload("hgoehoge")
                 .WithExactlyOnceQoS()
                 .Build();
+        await client.PublishAsync(msg);
+    }
+
+    private async void SendPosition()
+    {
+        var msg = new MqttApplicationMessageBuilder()
+                        .WithTopic("/my/transform")
+                        .WithPayload(target.position.ToString())
+                        .WithExactlyOnceQoS()
+                        .Build();
         await client.PublishAsync(msg);
     }
 
