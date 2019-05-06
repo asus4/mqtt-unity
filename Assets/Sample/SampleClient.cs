@@ -1,8 +1,8 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading.Tasks;
 using UnityEngine;
-
 using MQTTnet;
 using MQTTnet.Client;
 
@@ -23,19 +23,7 @@ public class SampleClient : MonoBehaviour
         client.Disconnected += OnDisconnected;
         client.ApplicationMessageReceived += OnApplicationMessageReceived;
 
-        var options = new MqttClientOptionsBuilder()
-            .WithTcpServer(ipAddress, port)
-            .Build();
-
-        await client.ConnectAsync(options);
-        Debug.Log("connected to the server");
-
-        var topic = new TopicFilterBuilder()
-            .WithTopic("my/test")
-            .Build();
-        await client.SubscribeAsync("/my/test");
-
-        Debug.Log("Subscribed");
+        await ConnectAsync(ipAddress);
     }
 
     async void OnDestroy()
@@ -49,18 +37,51 @@ public class SampleClient : MonoBehaviour
         Debug.Log("disconnected");
     }
 
-    async void Update()
+    void Update()
     {
-        if(Input.GetKeyDown(KeyCode.A))
+        if (Input.GetKeyDown(KeyCode.A))
         {
-            var msg = new MqttApplicationMessageBuilder()
+            PublishMessage();
+        }
+    }
+
+    public async void Connect(string address)
+    {
+        await ConnectAsync(address);
+    }
+    
+    public async Task ConnectAsync(string address)
+    {
+        var options = new MqttClientOptionsBuilder()
+            .WithTcpServer(address, port)
+            .Build();
+
+        var result = await client.ConnectAsync(options);
+        Debug.Log($"Connected to the broker: {result.IsSessionPresent}");
+
+        var topic = new TopicFilterBuilder()
+            .WithTopic("my/test")
+            .Build();
+        await client.SubscribeAsync("/my/test");
+
+        Debug.Log("Subscribed");
+    }
+
+    public async void PublishMessage()
+    {
+        await PublishMessageAsync();
+    }
+
+    public async Task PublishMessageAsync()
+    {
+        var msg = new MqttApplicationMessageBuilder()
                 .WithTopic("/my/test")
                 .WithPayload("hgoehoge")
                 .WithExactlyOnceQoS()
                 .Build();
-            await client.PublishAsync(msg);
-        }
+        await client.PublishAsync(msg);
     }
+
 
     private void OnConnected(object sender, MqttClientConnectedEventArgs e)
     {
@@ -81,7 +102,7 @@ public class SampleClient : MonoBehaviour
         sb.AppendFormat("Payload: {0}\n", Encoding.UTF8.GetString(e.ApplicationMessage.Payload));
         sb.AppendFormat("QoS: {0}\n", e.ApplicationMessage.QualityOfServiceLevel);
         sb.AppendFormat("Retain: {0}\n", e.ApplicationMessage.Retain);
-        
+
         Debug.Log(sb);
     }
 }
