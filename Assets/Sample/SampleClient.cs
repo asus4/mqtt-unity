@@ -5,8 +5,15 @@ using System.Threading.Tasks;
 using UnityEngine;
 using MQTTnet;
 using MQTTnet.Client;
+using MQTTnet.Client.Connecting;
+using MQTTnet.Client.Disconnecting;
+using MQTTnet.Client.Options;
+using MQTTnet.Client.Receiving;
 
-public class SampleClient : MonoBehaviour
+public class SampleClient : MonoBehaviour,
+                            IMqttClientConnectedHandler,
+                            IMqttClientDisconnectedHandler,
+                            IMqttApplicationMessageReceivedHandler
 {
     [SerializeField]
     string ipAddress = "";
@@ -19,18 +26,15 @@ public class SampleClient : MonoBehaviour
     async void Start()
     {
         client = new MqttFactory().CreateMqttClient();
-        client.Connected += OnConnected;
-        client.Disconnected += OnDisconnected;
-        client.ApplicationMessageReceived += OnApplicationMessageReceived;
+        client.ConnectedHandler = this;
+        client.DisconnectedHandler = this;
+        client.ApplicationMessageReceivedHandler = this;
 
         await ConnectAsync(ipAddress);
     }
 
     async void OnDestroy()
     {
-        client.Connected -= OnConnected;
-        client.Disconnected -= OnDisconnected;
-        client.ApplicationMessageReceived -= OnApplicationMessageReceived;
 
         Debug.Log("start disconnect");
         await client.DisconnectAsync();
@@ -49,7 +53,7 @@ public class SampleClient : MonoBehaviour
     {
         await ConnectAsync(address);
     }
-    
+
     public async Task ConnectAsync(string address)
     {
         var options = new MqttClientOptionsBuilder()
@@ -82,28 +86,36 @@ public class SampleClient : MonoBehaviour
         await client.PublishAsync(msg);
     }
 
-
-    private void OnConnected(object sender, MqttClientConnectedEventArgs e)
+    public Task HandleConnectedAsync(MqttClientConnectedEventArgs eventArgs)
     {
-        Debug.Log($"On Connected: {e}");
+        return new Task(() =>
+        {
+            Debug.Log($"HandleConnectedAsync: {eventArgs}");
+        });
     }
 
-    private void OnDisconnected(object sender, MqttClientDisconnectedEventArgs e)
+    public Task HandleDisconnectedAsync(MqttClientDisconnectedEventArgs eventArgs)
     {
-        Debug.Log($"On Disconnected: {e}");
+        return new Task(() =>
+        {
+            Debug.Log($"On Disconnected: {eventArgs}");
+        });
     }
 
-    private void OnApplicationMessageReceived(object sender, MqttApplicationMessageReceivedEventArgs e)
+    public Task HandleApplicationMessageReceivedAsync(MqttApplicationMessageReceivedEventArgs e)
     {
-        sb.Clear();
-        sb.AppendLine("Message:");
-        sb.AppendFormat("ClientID: {0}\n", e.ClientId);
-        sb.AppendFormat("Topic: {0}\n", e.ApplicationMessage.Topic);
-        sb.AppendFormat("Payload: {0}\n", Encoding.UTF8.GetString(e.ApplicationMessage.Payload));
-        sb.AppendFormat("QoS: {0}\n", e.ApplicationMessage.QualityOfServiceLevel);
-        sb.AppendFormat("Retain: {0}\n", e.ApplicationMessage.Retain);
+        return new Task(() =>
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("Message:");
+            sb.AppendFormat("ClientID: {0}\n", e.ClientId);
+            sb.AppendFormat("Topic: {0}\n", e.ApplicationMessage.Topic);
+            sb.AppendFormat("Payload: {0}\n", Encoding.UTF8.GetString(e.ApplicationMessage.Payload));
+            sb.AppendFormat("QoS: {0}\n", e.ApplicationMessage.QualityOfServiceLevel);
+            sb.AppendFormat("Retain: {0}\n", e.ApplicationMessage.Retain);
 
-        Debug.Log(sb);
+            Debug.Log(sb);
+        });
     }
+
 }
-

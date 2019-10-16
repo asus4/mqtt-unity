@@ -1,12 +1,17 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEngine;
 
 using MQTTnet;
 using MQTTnet.Server;
 using MQTTnet.Protocol;
 
-public class SampleServer : MonoBehaviour
+public class SampleServer : MonoBehaviour,
+                            IMqttServerClientConnectedHandler,
+                            IMqttServerClientDisconnectedHandler,
+                            IMqttServerClientSubscribedTopicHandler,
+                            IMqttServerClientUnsubscribedTopicHandler
 {
     [SerializeField]
     int port = 1883;
@@ -16,19 +21,20 @@ public class SampleServer : MonoBehaviour
     async void Start()
     {
         server = new MqttFactory().CreateMqttServer();
-        server.ClientConnected += OnClientConnected;
-        server.ClientDisconnected += OnClientDisconnected;
-        server.ClientSubscribedTopic += OnClientSubscribedTopic;
-        server.ClientUnsubscribedTopic += OnClientUnsubscribedTopic;
+        server.ClientConnectedHandler = this;
+        server.ClientDisconnectedHandler = this;
+        server.ClientSubscribedTopicHandler = this;
+        server.ClientUnsubscribedTopicHandler = this;
 
         var options = new MqttServerOptionsBuilder()
             .WithConnectionBacklog(10)
             .WithDefaultEndpointPort(port)
-            .WithConnectionValidator((c) =>
-            {
-                Debug.Log($"ClientID: {c.ClientId}\nUsername: {c.Username}\nPassword:{c.Password}\nEndpoint:{c.Endpoint}");
-                c.ReturnCode = MqttConnectReturnCode.ConnectionAccepted;
-            })
+            // .WithConnectionValidator((c) =>
+            // {
+            //     Debug.Log($"ClientID: {c.ClientId}\nUsername: {c.Username}\nPassword:{c.Password}\nEndpoint:{c.Endpoint}");
+            //     c.ReasonCode = MqttConnectReasonCode.Success;
+            //     c.ReturnCode
+            // })
             .WithSubscriptionInterceptor((c) =>
             {
                 Debug.Log($"ClientID: {c.ClientId}\n Topic:{c.TopicFilter.ToString()}");
@@ -43,35 +49,43 @@ public class SampleServer : MonoBehaviour
 
     async void OnDestroy()
     {
-        server.ClientConnected -= OnClientConnected;
-        server.ClientDisconnected -= OnClientDisconnected;
-        server.ClientSubscribedTopic -= OnClientSubscribedTopic;
-        server.ClientUnsubscribedTopic -= OnClientUnsubscribedTopic;
-
         Debug.Log("server stopping");
         await server.StopAsync();
         Debug.Log("server stoped");
     }
 
 
-    private void OnClientConnected(object sender, MqttClientConnectedEventArgs e)
+    public Task HandleClientConnectedAsync(MqttServerClientConnectedEventArgs eventArgs)
     {
-        Debug.Log($"OnClientConnected: {e}");
+        return new Task(() =>
+        {
+            Debug.Log($"HandleClientConnectedAsync : {eventArgs}");
+        });
     }
 
-    private void OnClientDisconnected(object sender, MqttClientDisconnectedEventArgs e)
+
+    public Task HandleClientDisconnectedAsync(MqttServerClientDisconnectedEventArgs eventArgs)
     {
-        Debug.Log($"OnClientDisconnected: {e}");
+        return new Task(() =>
+        {
+            Debug.Log($"HandleClientDisconnectedAsync : {eventArgs}");
+        });
     }
 
-    private void OnClientSubscribedTopic(object sender, MqttClientSubscribedTopicEventArgs e)
+    public Task HandleClientSubscribedTopicAsync(MqttServerClientSubscribedTopicEventArgs eventArgs)
     {
-        Debug.Log($"OnClientSubscribedTopic: {e}");
+        return new Task(() =>
+        {
+            Debug.Log($"HandleClientSubscribedTopicAsync : {eventArgs}");
+        });
     }
 
-    private void OnClientUnsubscribedTopic(object sender, MqttClientUnsubscribedTopicEventArgs e)
+    public Task HandleClientUnsubscribedTopicAsync(MqttServerClientUnsubscribedTopicEventArgs eventArgs)
     {
-        Debug.Log($"OnClientUnsubscribedTopic: {e}");
+        return new Task(() =>
+        {
+            Debug.Log($"HandleClientUnsubscribedTopicAsync : {eventArgs}");
+        });
     }
 
 
