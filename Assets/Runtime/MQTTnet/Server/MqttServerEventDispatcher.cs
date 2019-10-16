@@ -1,42 +1,89 @@
 ﻿using System;
+using System.Threading.Tasks;
+using MQTTnet.Client.Receiving;
+using MQTTnet.Diagnostics;
 
 namespace MQTTnet.Server
 {
     public class MqttServerEventDispatcher
     {
-        public event EventHandler<MqttClientSubscribedTopicEventArgs> ClientSubscribedTopic;
+        private readonly IMqttNetChildLogger _logger;
 
-        public event EventHandler<MqttClientUnsubscribedTopicEventArgs> ClientUnsubscribedTopic;
-
-        public event EventHandler<MqttClientConnectedEventArgs> ClientConnected;
-
-        public event EventHandler<MqttClientDisconnectedEventArgs> ClientDisconnected;
-
-        public event EventHandler<MqttApplicationMessageReceivedEventArgs> ApplicationMessageReceived;
-
-        public void OnClientSubscribedTopic(string clientId, TopicFilter topicFilter)
+        public MqttServerEventDispatcher(IMqttNetChildLogger logger)
         {
-            ClientSubscribedTopic?.Invoke(this, new MqttClientSubscribedTopicEventArgs(clientId, topicFilter));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public void OnClientUnsubscribedTopic(string clientId, string topicFilter)
+        public IMqttServerClientConnectedHandler ClientConnectedHandler { get; set; }
+
+        public IMqttServerClientDisconnectedHandler ClientDisconnectedHandler { get; set; }
+
+        public IMqttServerClientSubscribedTopicHandler ClientSubscribedTopicHandler { get; set; }
+
+        public IMqttServerClientUnsubscribedTopicHandler ClientUnsubscribedTopicHandler { get; set; }
+
+        public IMqttApplicationMessageReceivedHandler ApplicationMessageReceivedHandler { get; set; }
+
+        public Task HandleClientConnectedAsync(string clientId)
         {
-            ClientUnsubscribedTopic?.Invoke(this, new MqttClientUnsubscribedTopicEventArgs(clientId, topicFilter));
+            var handler = ClientConnectedHandler;
+            if (handler == null)
+            {
+                return Task.FromResult(0);
+            }
+
+            return handler.HandleClientConnectedAsync(new MqttServerClientConnectedEventArgs(clientId));
         }
 
-        public void OnClientDisconnected(string clientId, bool wasCleanDisconnect)
+        public async Task TryHandleClientDisconnectedAsync(string clientId, MqttClientDisconnectType disconnectType)
         {
-            ClientDisconnected?.Invoke(this, new MqttClientDisconnectedEventArgs(clientId, wasCleanDisconnect));
+            try
+            {
+                var handler = ClientDisconnectedHandler;
+                if (handler == null)
+                {
+                    return;
+                }
+
+                await handler.HandleClientDisconnectedAsync(new MqttServerClientDisconnectedEventArgs(clientId, disconnectType)).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                _logger.Error(exception, "Error while handling 'ClientDisconnected' event.");
+            }
         }
 
-        public void OnApplicationMessageReceived(string senderClientId, MqttApplicationMessage applicationMessage)
+        public Task HandleClientSubscribedTopicAsync(string clientId, TopicFilter topicFilter)
         {
-            ApplicationMessageReceived?.Invoke(this, new MqttApplicationMessageReceivedEventArgs(senderClientId, applicationMessage));
+            var handler = ClientSubscribedTopicHandler;
+            if (handler == null)
+            {
+                return Task.FromResult(0);
+            }
+
+            return handler.HandleClientSubscribedTopicAsync(new MqttServerClientSubscribedTopicEventArgs(clientId, topicFilter));
         }
 
-        public void OnClientConnected(string clientId)
+        public Task HandleClientUnsubscribedTopicAsync(string clientId, string topicFilter)
         {
-            ClientConnected?.Invoke(this, new MqttClientConnectedEventArgs(clientId));
+            var handler = ClientUnsubscribedTopicHandler;
+            if (handler == null)
+            {
+                return Task.FromResult(0);
+            }
+
+            return handler.HandleClientUnsubscribedTopicAsync(new MqttServerClientUnsubscribedTopicEventArgs(clientId, topicFilter));
+        }
+
+        public Task HandleApplicationMessageReceivedAsync(string senderClientId, MqttApplicationMessage applicationMessage)
+        {
+            var handler = ApplicationMessageReceivedHandler;
+            if (handler == null)
+            {
+                return Task.FromResult(0);
+            }
+
+            return handler.HandleApplicationMessageReceivedAsync(new MqttApplicationMessageReceivedEventArgs(senderClientId, applicationMessage));
         }
     }
 }

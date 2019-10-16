@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using MQTTnet.Packets;
 using MQTTnet.Protocol;
 
@@ -8,21 +9,24 @@ namespace MQTTnet.Server
 {
     public class MqttClientSubscriptionsManager
     {
-        private readonly Dictionary<string, MqttQualityOfServiceLevel> _subscriptions = new Dictionary<string, MqttQualityOfServiceLevel>();
-        private readonly IMqttServerOptions _options;
+        private readonly Dictionary<string, TopicFilter> _subscriptions = new Dictionary<string, TopicFilter>();
+        private readonly MqttClientSession _clientSession;
+        private readonly IMqttServerOptions _serverOptions;
         private readonly MqttServerEventDispatcher _eventDispatcher;
-        private readonly string _clientId;
 
-        public MqttClientSubscriptionsManager(string clientId, IMqttServerOptions options, MqttServerEventDispatcher eventDispatcher)
+        public MqttClientSubscriptionsManager(MqttClientSession clientSession, MqttServerEventDispatcher eventDispatcher, IMqttServerOptions serverOptions)
         {
-            _clientId = clientId ?? throw new ArgumentNullException(nameof(clientId));
-            _options = options ?? throw new ArgumentNullException(nameof(options));
+            _clientSession = clientSession ?? throw new ArgumentNullException(nameof(clientSession));
+
+            // TODO: Consider removing the server options here and build a new class "ISubscriptionInterceptor" and just pass it. The instance is generated in the root server class upon start.
+            _serverOptions = serverOptions ?? throw new ArgumentNullException(nameof(serverOptions));
             _eventDispatcher = eventDispatcher ?? throw new ArgumentNullException(nameof(eventDispatcher));
         }
 
-        public MqttClientSubscribeResult Subscribe(MqttSubscribePacket subscribePacket)
+        public async Task<MqttClientSubscribeResult> SubscribeAsync(MqttSubscribePacket subscribePacket, MqttConnectPacket connectPacket)
         {
             if (subscribePacket == null) throw new ArgumentNullException(nameof(subscribePacket));
+            if (connectPacket == null) throw new ArgumentNullException(nameof(connectPacket));
 
             var result = new MqttClientSubscribeResult
             {
@@ -34,16 +38,21 @@ namespace MQTTnet.Server
                 CloseConnection = false
             };
 
-            foreach (var topicFilter in subscribePacket.TopicFilters)
+            foreach (var originalTopicFilter in subscribePacket.TopicFilters)
             {
-                var interceptorContext = InterceptSubscribe(topicFilter);
-                if (!interceptorContext.AcceptSubscription)
+                var interceptorContext = await InterceptSubscribeAsync(originalTopicFilter).ConfigureAwait(false);
+
+                var finalTopicFilter = interceptorContext.TopicFilter;
+
+                if (finalTopicFilter == null || string.IsNullOrEmpty(finalTopicFilter.Topic) || !interceptorContext.AcceptSubscription)
                 {
-                    result.ResponsePacket.SubscribeReturnCodes.Add(MqttSubscribeReturnCode.Failure);
+                    result.ResponsePacket.ReturnCodes.Add(MqttSubscribeReturnCode.Failure);
+                    result.ResponsePacket.ReasonCodes.Add(MqttSubscribeReasonCode.UnspecifiedError);
                 }
                 else
                 {
-                    result.ResponsePacket.SubscribeReturnCodes.Add(ConvertToMaximumQoS(topicFilter.QualityOfServiceLevel));
+                    result.ResponsePacket.ReturnCodes.Add(ConvertToSubscribeReturnCode(finalTopicFilter.QualityOfServiceLevel));
+                    result.ResponsePacket.ReasonCodes.Add(ConvertToSubscribeReasonCode(finalTopicFilter.QualityOfServiceLevel));
                 }
 
                 if (interceptorContext.CloseConnection)
@@ -51,38 +60,89 @@ namespace MQTTnet.Server
                     result.CloseConnection = true;
                 }
 
-                if (interceptorContext.AcceptSubscription)
+                if (interceptorContext.AcceptSubscription && !string.IsNullOrEmpty(finalTopicFilter?.Topic))
                 {
                     lock (_subscriptions)
                     {
-                        _subscriptions[topicFilter.Topic] = topicFilter.QualityOfServiceLevel;
+                        _subscriptions[finalTopicFilter.Topic] = finalTopicFilter;
                     }
 
-                    _eventDispatcher.OnClientSubscribedTopic(_clientId, topicFilter);
+                    await _eventDispatcher.HandleClientSubscribedTopicAsync(_clientSession.ClientId, finalTopicFilter).ConfigureAwait(false);
                 }
             }
 
             return result;
         }
 
-        public MqttUnsubAckPacket Unsubscribe(MqttUnsubscribePacket unsubscribePacket)
+        public async Task SubscribeAsync(IEnumerable<TopicFilter> topicFilters)
+        {
+            if (topicFilters == null) throw new ArgumentNullException(nameof(topicFilters));
+
+            foreach (var topicFilter in topicFilters)
+            {
+                var interceptorContext = await InterceptSubscribeAsync(topicFilter).ConfigureAwait(false);
+                if (!interceptorContext.AcceptSubscription)
+                {
+                   continue;
+                }
+
+                if (interceptorContext.AcceptSubscription)
+                {
+                    lock (_subscriptions)
+                    {
+                        _subscriptions[topicFilter.Topic] = topicFilter;
+                    }
+
+                    await _eventDispatcher.HandleClientSubscribedTopicAsync(_clientSession.ClientId, topicFilter).ConfigureAwait(false);
+                }
+            }
+        }
+
+        public async Task<MqttUnsubAckPacket> UnsubscribeAsync(MqttUnsubscribePacket unsubscribePacket)
         {
             if (unsubscribePacket == null) throw new ArgumentNullException(nameof(unsubscribePacket));
+
+            var unsubAckPacket = new MqttUnsubAckPacket
+            {
+                PacketIdentifier = unsubscribePacket.PacketIdentifier
+            };
 
             lock (_subscriptions)
             {
                 foreach (var topicFilter in unsubscribePacket.TopicFilters)
                 {
-                    _subscriptions.Remove(topicFilter);
-
-                    _eventDispatcher.OnClientUnsubscribedTopic(_clientId, topicFilter);
+                    if (_subscriptions.Remove(topicFilter))
+                    {
+                        unsubAckPacket.ReasonCodes.Add(MqttUnsubscribeReasonCode.Success);
+                    }
+                    else
+                    {
+                        unsubAckPacket.ReasonCodes.Add(MqttUnsubscribeReasonCode.NoSubscriptionExisted);
+                    }
                 }
             }
 
-            return new MqttUnsubAckPacket
+            foreach (var topicFilter in unsubscribePacket.TopicFilters)
             {
-                PacketIdentifier = unsubscribePacket.PacketIdentifier
-            };
+                await _eventDispatcher.HandleClientUnsubscribedTopicAsync(_clientSession.ClientId, topicFilter).ConfigureAwait(false);
+            }
+            
+            return unsubAckPacket;
+        }
+
+        public Task UnsubscribeAsync(IEnumerable<string> topicFilters)
+        {
+            if (topicFilters == null) throw new ArgumentNullException(nameof(topicFilters));
+
+            lock (_subscriptions)
+            {
+                foreach (var topicFilter in topicFilters)
+                {
+                    _subscriptions.Remove(topicFilter);
+                }
+            }
+
+            return Task.FromResult(0);
         }
 
         public CheckSubscriptionsResult CheckSubscriptions(string topic, MqttQualityOfServiceLevel qosLevel)
@@ -98,7 +158,7 @@ namespace MQTTnet.Server
                         continue;
                     }
 
-                    qosLevels.Add(subscription.Value);
+                    qosLevels.Add(subscription.Value.QualityOfServiceLevel);
                 }
             }
 
@@ -113,7 +173,7 @@ namespace MQTTnet.Server
             return CreateSubscriptionResult(qosLevel, qosLevels);
         }
 
-        private static MqttSubscribeReturnCode ConvertToMaximumQoS(MqttQualityOfServiceLevel qualityOfServiceLevel)
+        private static MqttSubscribeReturnCode ConvertToSubscribeReturnCode(MqttQualityOfServiceLevel qualityOfServiceLevel)
         {
             switch (qualityOfServiceLevel)
             {
@@ -124,11 +184,26 @@ namespace MQTTnet.Server
             }
         }
 
-        private MqttSubscriptionInterceptorContext InterceptSubscribe(TopicFilter topicFilter)
+        private static MqttSubscribeReasonCode ConvertToSubscribeReasonCode(MqttQualityOfServiceLevel qualityOfServiceLevel)
         {
-            var interceptorContext = new MqttSubscriptionInterceptorContext(_clientId, topicFilter);
-            _options.SubscriptionInterceptor?.Invoke(interceptorContext);
-            return interceptorContext;
+            switch (qualityOfServiceLevel)
+            {
+                case MqttQualityOfServiceLevel.AtMostOnce: return MqttSubscribeReasonCode.GrantedQoS0;
+                case MqttQualityOfServiceLevel.AtLeastOnce: return MqttSubscribeReasonCode.GrantedQoS1;
+                case MqttQualityOfServiceLevel.ExactlyOnce: return MqttSubscribeReasonCode.GrantedQoS2;
+                default: return MqttSubscribeReasonCode.UnspecifiedError;
+            }
+        }
+
+        private async Task<MqttSubscriptionInterceptorContext> InterceptSubscribeAsync(TopicFilter topicFilter)
+        {
+            var context = new MqttSubscriptionInterceptorContext(_clientSession.ClientId, topicFilter, _clientSession.Items);
+            if (_serverOptions.SubscriptionInterceptor != null)
+            {
+                await _serverOptions.SubscriptionInterceptor.InterceptSubscriptionAsync(context).ConfigureAwait(false);
+            }
+
+            return context;
         }
 
         private static CheckSubscriptionsResult CreateSubscriptionResult(MqttQualityOfServiceLevel qosLevel, HashSet<MqttQualityOfServiceLevel> subscribedQoSLevels)

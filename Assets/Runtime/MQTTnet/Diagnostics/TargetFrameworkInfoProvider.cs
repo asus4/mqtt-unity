@@ -19,7 +19,6 @@
 #elif WINDOWS_UWP
                 return "uap10.0";
 #endif
-                return "unity";
             }
         }
     }

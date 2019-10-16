@@ -5,15 +5,15 @@ using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
 using MQTTnet.Channel;
-using MQTTnet.Client;
+using MQTTnet.Client.Options;
 
 namespace MQTTnet.Implementations
 {
     public class MqttWebSocketChannel : IMqttChannel
     {
-        private readonly SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
         private readonly MqttClientWebSocketOptions _options;
 
+        private SemaphoreSlim _sendLock = new SemaphoreSlim(1, 1);
         private WebSocket _webSocket;
 
         public MqttWebSocketChannel(MqttClientWebSocketOptions options)
@@ -21,13 +21,20 @@ namespace MQTTnet.Implementations
             _options = options ?? throw new ArgumentNullException(nameof(options));
         }
 
-        public MqttWebSocketChannel(WebSocket webSocket, string endpoint)
+        public MqttWebSocketChannel(WebSocket webSocket, string endpoint, bool isSecureConnection, X509Certificate2 clientCertificate)
         {
             _webSocket = webSocket ?? throw new ArgumentNullException(nameof(webSocket));
+
             Endpoint = endpoint;
+            IsSecureConnection = isSecureConnection;
+            ClientCertificate = clientCertificate;
         }
 
         public string Endpoint { get; }
+
+        public bool IsSecureConnection { get; private set; }
+
+        public X509Certificate2 ClientCertificate { get; private set; }
 
         public async Task ConnectAsync(CancellationToken cancellationToken)
         {
@@ -83,9 +90,11 @@ namespace MQTTnet.Implementations
 
             await clientWebSocket.ConnectAsync(new Uri(uri), cancellationToken).ConfigureAwait(false);
             _webSocket = clientWebSocket;
+
+            IsSecureConnection = uri.StartsWith("wss://", StringComparison.OrdinalIgnoreCase);
         }
 
-        public async Task DisconnectAsync()
+        public async Task DisconnectAsync(CancellationToken cancellationToken)
         {
             if (_webSocket == null)
             {
@@ -94,7 +103,7 @@ namespace MQTTnet.Implementations
 
             if (_webSocket.State == WebSocketState.Open || _webSocket.State == WebSocketState.Connecting)
             {
-                await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None).ConfigureAwait(false);
+                await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, cancellationToken).ConfigureAwait(false);
             }
 
             Dispose();
@@ -108,9 +117,14 @@ namespace MQTTnet.Implementations
 
         public async Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         {
-            // This lock is required because the client will throw an exception if _SendAsync_ is 
+            // The lock is required because the client will throw an exception if _SendAsync_ is 
             // called from multiple threads at the same time. But this issue only happens with several
             // framework versions.
+            if (_sendLock == null)
+            {
+                return;
+            }
+
             await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
@@ -118,13 +132,14 @@ namespace MQTTnet.Implementations
             }
             finally
             {
-                _sendLock.Release();
+                _sendLock?.Release();
             }
         }
 
         public void Dispose()
         {
             _sendLock?.Dispose();
+            _sendLock = null;
 
             try
             {
@@ -155,9 +170,7 @@ namespace MQTTnet.Implementations
 
             if (!string.IsNullOrEmpty(_options.ProxyOptions.Username) && !string.IsNullOrEmpty(_options.ProxyOptions.Password))
             {
-                var credentials =
-                    new NetworkCredential(_options.ProxyOptions.Username, _options.ProxyOptions.Password, _options.ProxyOptions.Domain);
-
+                var credentials = new NetworkCredential(_options.ProxyOptions.Username, _options.ProxyOptions.Password, _options.ProxyOptions.Domain);
                 return new WebProxy(proxyUri, _options.ProxyOptions.BypassOnLocal, _options.ProxyOptions.BypassList, credentials);
             }
 

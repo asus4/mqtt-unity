@@ -1,4 +1,5 @@
 ﻿using System.IO;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
 using MQTTnet.Channel;
@@ -16,12 +17,16 @@ namespace MQTTnet.Internal
 
         public string Endpoint { get; } = "<Test channel>";
 
+        public bool IsSecureConnection { get; } = false;
+
+        public X509Certificate2 ClientCertificate { get; }
+
         public Task ConnectAsync(CancellationToken cancellationToken)
         {
             return Task.FromResult(0);
         }
 
-        public Task DisconnectAsync()
+        public Task DisconnectAsync(CancellationToken cancellationToken)
         {
             return Task.FromResult(0);
         }

@@ -10,6 +10,8 @@ namespace MQTTnet.Server
 
         public int ConnectionBacklog { get; set; } = 10;
 
+        public bool NoDelay { get; set; } = true;
+
 #if WINDOWS_UWP
         public int BufferSize { get; set; } = 4096;
 #endif
@@ -17,5 +19,10 @@ namespace MQTTnet.Server
         public IPAddress BoundInterNetworkAddress { get; set; } = IPAddress.Any;
 
         public IPAddress BoundInterNetworkV6Address { get; set; } = IPAddress.IPv6Any;
+
+        /// <summary>
+        /// This requires admin permissions on Linux.
+        /// </summary>
+        public bool ReuseAddress { get; set; }
     }
 }
